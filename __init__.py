@@ -1,3 +1,1 @@
-from ._gif import *
-
-# by ~ @ttccss
+from ._razan import *
