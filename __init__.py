@@ -1,4 +1,3 @@
-from ._asroz import *
-from ._asst import *
+from ._gif import *
 
-# By @ttccss
+# by ~ @ttccss
