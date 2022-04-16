@@ -1,53 +1,114 @@
-from sqlalchemy import Column, String
+import threading
+
+from sqlalchemy import Column, String, UnicodeText, distinct, func
 
 from . import BASE, SESSION
 
 
-class blacklist(BASE):
+class BlackListFilters(BASE):
     __tablename__ = "blacklist"
     chat_id = Column(String(14), primary_key=True)
-    # reason = Column(UnicodeText)
+    trigger = Column(UnicodeText, primary_key=True, nullable=False)
 
-    def __init__(self, chat_id):
-        self.chat_id = int(chat_id)
-        # self.reason = reason
+    def __init__(self, chat_id, trigger):
+        self.chat_id = str(chat_id)  # ensure string
+        self.trigger = trigger
 
     def __repr__(self):
-        return "<BL %s>" % self.chat_id
+        return "<Blacklist filter '%s' for %s>" % (self.trigger, self.chat_id)
+
+    def __eq__(self, other):
+        return bool(
+            isinstance(other, BlackListFilters)
+            and self.chat_id == other.chat_id
+            and self.trigger == other.trigger
+        )
 
 
-blacklist.__table__.create(checkfirst=True)
+BlackListFilters.__table__.create(checkfirst=True)
+
+BLACKLIST_FILTER_INSERTION_LOCK = threading.RLock()
 
 
-def add_user_to_bl(chat_id: int):
-    """Adding the user to the blacklist"""
-    __user = blacklist(str(chat_id))
-    SESSION.add(__user)
-    SESSION.commit()
+class BLACKLIST_SQL:
+    def __init__(self):
+        self.CHAT_BLACKLISTS = {}
 
 
-def check_is_black_list(chat_id):
-    """check if blacklisted"""
+BLACKLIST_SQL_ = BLACKLIST_SQL()
+
+
+def add_to_blacklist(chat_id, trigger):
+    with BLACKLIST_FILTER_INSERTION_LOCK:
+        blacklist_filt = BlackListFilters(str(chat_id), trigger)
+
+        SESSION.merge(blacklist_filt)  # merge to avoid duplicate key issues
+        SESSION.commit()
+        BLACKLIST_SQL_.CHAT_BLACKLISTS.setdefault(str(chat_id), set()).add(trigger)
+
+
+def rm_from_blacklist(chat_id, trigger):
+    with BLACKLIST_FILTER_INSERTION_LOCK:
+        blacklist_filt = SESSION.query(BlackListFilters).get((str(chat_id), trigger))
+        if blacklist_filt:
+            if trigger in BLACKLIST_SQL_.CHAT_BLACKLISTS.get(
+                str(chat_id), set()
+            ):  # sanity check
+                BLACKLIST_SQL_.CHAT_BLACKLISTS.get(str(chat_id), set()).remove(trigger)
+
+            SESSION.delete(blacklist_filt)
+            SESSION.commit()
+            return True
+
+        SESSION.close()
+        return False
+
+
+def get_chat_blacklist(chat_id):
+    return BLACKLIST_SQL_.CHAT_BLACKLISTS.get(str(chat_id), set())
+
+
+def num_blacklist_filters():
     try:
-        return SESSION.query(blacklist).filter(blacklist.chat_id == str(chat_id)).one()
-    except BaseException:
-        return None
+        return SESSION.query(BlackListFilters).count()
     finally:
         SESSION.close()
 
 
-def rem_user_from_bl(chat_id):
-    """remove from bl"""
-    __user = SESSION.query(blacklist).get(str(chat_id))
-    if __user:
-        SESSION.delete(__user)
-        SESSION.commit()
+def num_blacklist_chat_filters(chat_id):
+    try:
+        return (
+            SESSION.query(BlackListFilters.chat_id)
+            .filter(BlackListFilters.chat_id == str(chat_id))
+            .count()
+        )
+    finally:
+        SESSION.close()
 
 
-def all_bl_users():
-    """get all bl users"""
-    __user = SESSION.query(blacklist).all()
-    SESSION.close()
-    return __user
+def num_blacklist_filter_chats():
+    try:
+        return SESSION.query(func.count(distinct(BlackListFilters.chat_id))).scalar()
+    finally:
+        SESSION.close()
 
-# 𝐄𝐈𝐓𝐇𝐎𝐍 𝐒𝐎𝐔𝐑𝐂𝐄 سورس ايثون  
+
+def __load_chat_blacklists():
+    try:
+        chats = SESSION.query(BlackListFilters.chat_id).distinct().all()
+        for (chat_id,) in chats:  # remove tuple by ( ,)
+            BLACKLIST_SQL_.CHAT_BLACKLISTS[chat_id] = []
+
+        all_filters = SESSION.query(BlackListFilters).all()
+        for x in all_filters:
+            BLACKLIST_SQL_.CHAT_BLACKLISTS[x.chat_id] += [x.trigger]
+
+        BLACKLIST_SQL_.CHAT_BLACKLISTS = {
+            x: set(y) for x, y in BLACKLIST_SQL_.CHAT_BLACKLISTS.items()
+        }
+
+    finally:
+        SESSION.close()
+
+
+__load_chat_blacklists()

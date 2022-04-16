@@ -1,34 +1,41 @@
-from html_telegraph_poster import TelegraphPoster
+from telethon.tl.functions.channels import (
+    CreateChannelRequest,
+    EditPhotoRequest,
+    InviteToChannelRequest,
+)
+from telethon.tl.functions.messages import ExportChatInviteRequest
 
 
-def media_type(message):
-    if message and message.photo:
-        return "Photo"
-    if message and message.audio:
-        return "Audio"
-    if message and message.voice:
-        return "Voice"
-    if message and message.video_note:
-        return "Round Video"
-    if message and message.gif:
-        return "Gif"
-    if message and message.sticker:
-        return "Sticker"
-    if message and message.video:
-        return "Video"
-    if message and message.document:
-        return "Document"
-    return None
-
-
-async def post_to_telegraph(page_title, html_format_content):
-    post_client = TelegraphPoster(use_api=True)
-    auth_name = "Jmthonuserbot"
-    post_client.create_api_token(auth_name)
-    post_page = post_client.post(
-        title=page_title,
-        author=auth_name,
-        author_url="https://t.me/JMTHON",
-        text=html_format_content,
-    )
-    return post_page["url"]
+async def create_supergroup(group_name, client, botusername, descript, photo):
+    try:
+        result = await client(
+            CreateChannelRequest(
+                title=group_name,
+                about=descript,
+                megagroup=True,
+            )
+        )
+        created_chat_id = result.chats[0].id
+        result = await client(
+            ExportChatInviteRequest(
+                peer=created_chat_id,
+            )
+        )
+        await client(
+            InviteToChannelRequest(
+                channel=created_chat_id,
+                users=[botusername],
+            )
+        )
+        if photo:
+            await client(
+                EditPhotoRequest(
+                    channel=created_chat_id,
+                    photo=photo,
+                )
+            )
+    except Exception as e:
+        return "error", str(e)
+    if not str(created_chat_id).startswith("-100"):
+        created_chat_id = int("-100" + str(created_chat_id))
+    return result, created_chat_id
